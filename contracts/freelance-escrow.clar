@@ -160,4 +160,64 @@
   )
 )
 
+(define-public (initiate-dispute (escrow-id uint))
+  (let
+    (
+      (escrow (unwrap! (get-escrow escrow-id) (err err-not-found)))
+    )
+    (asserts! (or (is-eq tx-sender (get client escrow)) (is-eq tx-sender (get freelancer escrow))) (err err-not-authorized))
+    (asserts! (is-eq (get state escrow) "IN_PROGRESS") (err err-invalid-state))
+    (map-set escrows
+      { escrow-id: escrow-id }
+      (merge escrow { state: "DISPUTED" })
+    )
+    (ok true)
+  )
+)
 
+(define-public (resolve-dispute (escrow-id uint) (client-share uint) (freelancer-share uint))
+  (let
+    (
+      (escrow (unwrap! (get-escrow escrow-id) (err err-not-found)))
+    )
+    (asserts! (is-eq tx-sender contract-owner) (err err-not-authorized))
+    (asserts! (is-eq (get state escrow) "DISPUTED") (err err-invalid-state))
+    (asserts! (is-eq (+ client-share freelancer-share) (get amount escrow)) (err err-invalid-state))
+    (match (as-contract (stx-transfer? client-share tx-sender (get client escrow)))
+      success-client
+        (match (as-contract (stx-transfer? freelancer-share tx-sender (get freelancer escrow)))
+          success-freelancer
+            (begin
+              (map-set escrows
+                { escrow-id: escrow-id }
+                (merge escrow { state: "RESOLVED" })
+              )
+              (ok true)
+            )
+          error-freelancer (err err-insufficient-funds)
+        )
+      error-client (err err-insufficient-funds)
+    )
+  )
+)
+
+(define-public (cancel-escrow (escrow-id uint))
+  (let
+    (
+      (escrow (unwrap! (get-escrow escrow-id) (err err-not-found)))
+    )
+    (asserts! (is-eq tx-sender (get client escrow)) (err err-not-authorized))
+    (asserts! (is-eq (get state escrow) "CREATED") (err err-invalid-state))
+    (match (as-contract (stx-transfer? (get amount escrow) tx-sender (get client escrow)))
+      success
+        (begin
+          (map-set escrows
+            { escrow-id: escrow-id }
+            (merge escrow { state: "CANCELLED" })
+          )
+          (ok true)
+        )
+      error (err err-insufficient-funds)
+    )
+  )
+)
