@@ -82,3 +82,82 @@
   )
 )
 
+(define-public (add-milestone (escrow-id uint) (milestone-id uint) (description (string-utf8 256)) (amount uint))
+  (let
+    (
+      (escrow (unwrap! (get-escrow escrow-id) (err err-not-found)))
+    )
+    (asserts! (is-eq tx-sender (get client escrow)) (err err-not-authorized))
+    (asserts! (is-eq (get state escrow) "CREATED") (err err-invalid-state))
+    (asserts! (< milestone-id (get milestone-count escrow)) (err err-invalid-state))
+    (map-set escrow-milestones
+      { escrow-id: escrow-id, milestone-id: milestone-id }
+      {
+        description: description,
+        amount: amount,
+        completed: false
+      }
+    )
+    (ok true)
+  )
+)
+
+(define-public (start-escrow (escrow-id uint))
+  (let
+    (
+      (escrow (unwrap! (get-escrow escrow-id) (err err-not-found)))
+    )
+    (asserts! (is-eq tx-sender (get client escrow)) (err err-not-authorized))
+    (asserts! (is-eq (get state escrow) "CREATED") (err err-invalid-state))
+    (map-set escrows
+      { escrow-id: escrow-id }
+      (merge escrow { state: "IN_PROGRESS" })
+    )
+    (ok true)
+  )
+)
+
+(define-public (complete-milestone (escrow-id uint) (milestone-id uint))
+  (let
+    (
+      (escrow (unwrap! (get-escrow escrow-id) (err err-not-found)))
+      (milestone (unwrap! (get-milestone escrow-id milestone-id) (err err-not-found)))
+    )
+    (asserts! (is-eq tx-sender (get freelancer escrow)) (err err-not-authorized))
+    (asserts! (is-eq (get state escrow) "IN_PROGRESS") (err err-invalid-state))
+    (asserts! (not (get completed milestone)) (err err-invalid-state))
+    (map-set escrow-milestones
+      { escrow-id: escrow-id, milestone-id: milestone-id }
+      (merge milestone { completed: true })
+    )
+    (map-set escrows
+      { escrow-id: escrow-id }
+      (merge escrow { completed-milestones: (+ (get completed-milestones escrow) u1) })
+    )
+    (ok true)
+  )
+)
+
+(define-public (release-funds (escrow-id uint))
+  (let
+    (
+      (escrow (unwrap! (get-escrow escrow-id) (err err-not-found)))
+    )
+    (asserts! (is-eq tx-sender (get client escrow)) (err err-not-authorized))
+    (asserts! (is-eq (get state escrow) "IN_PROGRESS") (err err-invalid-state))
+    (asserts! (is-eq (get completed-milestones escrow) (get milestone-count escrow)) (err err-invalid-state))
+    (match (as-contract (stx-transfer? (get amount escrow) tx-sender (get freelancer escrow)))
+      success
+        (begin
+          (map-set escrows
+            { escrow-id: escrow-id }
+            (merge escrow { state: "COMPLETED" })
+          )
+          (ok true)
+        )
+      error (err err-insufficient-funds)
+    )
+  )
+)
+
+
